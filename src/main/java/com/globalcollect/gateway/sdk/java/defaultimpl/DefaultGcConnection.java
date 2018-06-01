@@ -5,6 +5,8 @@ import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 import org.apache.http.Header;
@@ -31,6 +33,8 @@ import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.conn.routing.HttpRoutePlanner;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.conn.ssl.SSLContexts;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.auth.BasicScheme;
 import org.apache.http.impl.client.BasicCredentialsProvider;
@@ -53,13 +57,28 @@ import com.globalcollect.gateway.sdk.java.GcResponseException;
 import com.globalcollect.gateway.sdk.java.RequestHeader;
 import com.globalcollect.gateway.sdk.java.RequestParam;
 
+import javax.net.ssl.SSLContext;
+
 /**
  * {@link GcConnection} implementation based on {@link HttpClient}.
+ *
+ * Allows connection to GlobalCollect API with a supported TLS version. TLSV1.1 will be used by default instead of TLSV1
+ * TLS1 support is being removed by GlobalCollect API and it causes troubles with jre6/7 and HTTPClient. (TLSV1 = default in jdk7.)
+ * TLSV1.1, TLSV1.2 are still supported today. ( May 2018 )
+ *
+ * You can use your own https supported protocols by setting the standard "https.protocols" parameter at startup to load supported your own supported https protocols
+ * @author linuxidefix
  */
 public class DefaultGcConnection implements GcConnection {
 
 	private static final Charset CHARSET = Charset.forName("UTF-8");
-	
+
+	//public allow to change it quickly without touching API , TLSV1.1 is the only protocol supported by jdk6/7/8
+	/**
+	 * Supported Https Protocols
+	 * */
+	public static String[] GC_SUPPORTED_HTTPS_PROTOCOLS=new String[]{"TLSv1.1"};
+
 	// CloseableHttpClient is marked to be thread safe
 	protected final CloseableHttpClient httpClient;
 	
@@ -139,11 +158,30 @@ public class DefaultGcConnection implements GcConnection {
 	}
 	
 	private CloseableHttpClient createHttpClient(int maxConnections, GcProxyConfiguration proxyConfiguration) {
-		
-		HttpClientBuilder builder = HttpClients.custom()
+		//Create a HTTP Builder that will use the system "https.protocols" property if it exists
+		HttpClientBuilder builder = HttpClients.custom().useSystemProperties()
 				.setMaxConnPerRoute(maxConnections)
 				.setMaxConnTotal(maxConnections + 20);
-		
+
+		//This part is not required only if you don't want to set "https.protocols" parameter at startup.
+		if(System.getProperty("https.protocols")==null){
+			SSLContext sslContext;
+			SSLConnectionSocketFactory f;
+			try {
+				sslContext = SSLContexts.custom()
+						.useTLS()
+						.build();
+				f = new SSLConnectionSocketFactory(
+						sslContext,
+						GC_SUPPORTED_HTTPS_PROTOCOLS,
+						null,
+						SSLConnectionSocketFactory.BROWSER_COMPATIBLE_HOSTNAME_VERIFIER);
+				builder.setSSLSocketFactory(f);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
 		HttpRoutePlanner routePlanner;
 		CredentialsProvider credentialsProvider;
 		
